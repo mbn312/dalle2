@@ -94,7 +94,7 @@ def get_train_set(config, augment_data=False):
 
     dataset.transform = transform
 
-    return dataset
+    return dataset, mean, std
 
 def get_train_val_split(config, augment_data=False):
     if config.dataset == "fashion_mnist":
