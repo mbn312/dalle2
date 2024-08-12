@@ -1,5 +1,8 @@
 import torch
 import torch.nn as nn
+from model.prior import DiffusionPrior
+from data.data_utils import freeze_model
+from model.transformer import SinusoidalPositionalEmbedding, TransformerBlock
 
 class Downsample(nn.Module):
     def __init__(self, n_channels, kernel_size=(3,3), stride=2, down_pool=False):
@@ -170,5 +173,181 @@ class AttentionBlock(nn.Module):
 
         # Residual connection
         x = x + x_0
+
+        return x
+    
+class Decoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        # Loading Prior Model
+        self.prior = DiffusionPrior(config).to(config.device)
+        self.prior.load_state_dict(torch.load(config.prior.model_location, map_location=config.device))
+        freeze_model(self.prior)
+
+        # MLP to get time embeddings
+        self.time_mlp = nn.Sequential(
+            SinusoidalPositionalEmbedding(config.decoder.max_time, config.decoder.model_channels),
+            nn.Linear(config.decoder.model_channels, config.decoder.cond_channels),
+            nn.SiLU(),
+            nn.Linear(config.decoder.cond_channels, config.decoder.cond_channels)
+        )
+
+        # MLP to project CLIP image embeddings
+        self.img_projection = nn.Sequential(
+            nn.Linear(config.latent_dim, config.decoder.cond_channels),
+            nn.SiLU(),
+            nn.Linear(config.decoder.cond_channels, config.decoder.cond_channels)
+        )
+
+        # Projection to get image tokens
+        self.get_img_tokens = nn.Linear(1, config.decoder.n_img_tokens)
+
+        # Embedding layer for text captions
+        self.text_embedding = nn.Embedding(config.vocab_size, config.latent_dim)
+
+        # Learned positional encodings for text captions
+        self.positional_encodings = nn.Parameter(torch.randn(config.text_seq_length,config.latent_dim) * (config.latent_dim ** -0.5))
+
+        # Transformer encoder blocks to encode text captions
+        self.text_encoder = nn.ModuleList(
+            [TransformerBlock(
+                config.latent_dim,
+                cond_width=config.latent_dim,
+                n_heads=config.decoder.n_heads,
+                dropout=config.decoder.dropout,
+                r_mlp=config.decoder.r_mlp,
+                bias=config.decoder.bias
+            ) for _ in range(config.decoder.text_layers)]
+        )
+
+        # Final layer norm for encoding text captions
+        self.final_ln = nn.LayerNorm(config.latent_dim)
+
+        ch = config.decoder.model_channels
+
+        # Initial convolution
+        self.in_conv = nn.Conv2d(config.img_channels, ch, config.decoder.kernel_size, padding=1)
+
+        # UNet Encoder Layers
+        self.encoder = nn.ModuleList([])
+        for r in config.decoder.channel_ratios:
+            for _ in range(config.decoder.n_layer_blocks):
+                # Add residual block to encoder layer
+                self.encoder.append(ResidualBlock(ch, config.decoder.model_channels * r, config.decoder.cond_channels, config.decoder.n_groups, config.decoder.kernel_size, config.decoder.dropout, config.decoder.use_scale_shift))
+
+                # Update number of channels
+                ch = config.decoder.model_channels * r
+
+                # Outer encoder layers has no attention blocks
+                if r != config.decoder.channel_ratios[0] and r != config.decoder.channel_ratios[-1]:
+                    # Add attention block to encoder layer
+                    self.encoder.append(AttentionBlock(ch, config.latent_dim, config.decoder.n_groups, config.decoder.n_heads, config.decoder.dropout))
+
+            # No downsample for last encoder layer
+            if r != config.decoder.channel_ratios[-1]:
+                # Add downsample to encoder layer
+                self.encoder.append(Downsample(ch, config.decoder.kernel_size, config.decoder.stride, config.decoder.down_pool))
+
+        # UNet Bottleneck Layers
+        self.bottleneck = nn.ModuleList([])
+        for block in range(config.decoder.n_layer_blocks):
+            # Add residual block to bottleneck layer
+            self.bottleneck.append(ResidualBlock(ch, ch, config.decoder.cond_channels, config.decoder.n_groups, config.decoder.kernel_size, config.decoder.dropout, config.decoder.use_scale_shift))
+
+            # No attention block at end of bottleneck layer
+            if block != config.decoder.n_layer_blocks - 1:
+                # Add attention block to bottleneck layer
+                self.bottleneck.append(AttentionBlock(ch, config.latent_dim, config.decoder.n_groups, config.decoder.n_heads, config.decoder.dropout))
+
+        # UNet Decoder Layers
+        self.decoder = nn.ModuleList([])
+        for r in range(len(config.decoder.channel_ratios))[::-1]:
+            for _ in range(config.decoder.n_layer_blocks):
+                # Add residual block to decoder layer
+                self.decoder.append(ResidualBlock(ch * 2, ch, config.decoder.cond_channels, config.decoder.n_groups, config.decoder.kernel_size, config.decoder.dropout, config.decoder.use_scale_shift))
+
+                # Outer decoder layers has no attention blocks
+                if r != 0 and r!= len(config.decoder.channel_ratios) - 1:
+                    # Add attention block to decoder layer
+                    self.decoder.append(AttentionBlock(ch, config.latent_dim, config.decoder.n_groups, config.decoder.n_heads, config.decoder.dropout))
+
+            # No upsample for last decoder layer
+            if r != 0:
+                # Update number of channels
+                ch = config.decoder.model_channels * config.decoder.channel_ratios[r-1]
+
+                # Add upsample to decoder layer
+                self.decoder.append(Upsample(config.decoder.model_channels * config.decoder.channel_ratios[r], ch, config.decoder.kernel_size))
+
+        # Output projection
+        self.output = nn.Sequential(
+            nn.GroupNorm(config.decoder.n_groups, config.decoder.model_channels),
+            nn.SiLU(),
+            nn.Conv2d(config.decoder.model_channels, config.img_channels, config.decoder.kernel_size, padding=1)
+        )
+
+        # Skip connections
+        self.connections = []
+
+    def encode_text(self, text, mask=None):
+        x = self.text_embedding(text)
+
+        x = x + self.positional_encodings
+
+        for block in self.text_encoder:
+            x = block(x, mask=mask)
+
+        x = self.final_ln(x)
+
+        return x
+
+    def forward(self, x, time, caption=None, mask=None):
+        # Sample prior model to get CLIP image embeddings
+        img_embeddings = self.prior.sample(caption, mask).to(x.device)
+
+        # Get conditioning information for residual blocks
+        c_emb = self.time_mlp(time) + self.img_projection(img_embeddings)
+
+        # Get conditioning information for attention blocks
+        c_attn = self.get_img_tokens(img_embeddings[..., None]).permute(0, 2, 1)
+        if caption is not None:
+            c_attn = torch.cat([self.encode_text(caption, mask), c_attn], dim=1)
+
+        # Initial convolution
+        x = self.in_conv(x)
+
+        # UNet encoder layers
+        for module in self.encoder:
+            if isinstance(module, ResidualBlock):
+                x = module(x, c_emb)
+                # Getting skip connection
+                self.connections.append(x)
+            elif isinstance(module, AttentionBlock):
+                x = module(x, cond=c_attn)
+            else:
+                x = module(x)
+
+        # UNet bottleneck layers
+        for module in self.bottleneck:
+            if isinstance(module, ResidualBlock):
+                x = module(x, c_emb)
+            elif isinstance(module, AttentionBlock):
+                x = module(x, cond=c_attn)
+            else:
+                x = module(x)
+
+        # UNet decoder layers
+        for module in self.decoder:
+            if isinstance(module, ResidualBlock):
+                # Concatenate skip connection to end of input
+                x = torch.cat([x, self.connections.pop()], dim=1)
+                x = module(x, c_emb)
+            elif isinstance(module, AttentionBlock):
+                x = module(x, cond=c_attn)
+            else:
+                x = module(x)
+
+        # Output projection
+        x = self.output(x)
 
         return x
