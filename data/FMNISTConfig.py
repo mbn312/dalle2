@@ -80,6 +80,7 @@ class DecoderConfig:
     n_img_tokens:int = 4
     # Training
     augment_data:bool = False
+    validate:bool = False
     num_workers:int = 0
     batch_size:int = 32
     lr:float = 5e-4
@@ -88,7 +89,7 @@ class DecoderConfig:
     epochs:int = 100
     warmup_epochs:int = 5
     grad_max_norm:float = 1.0
-    sample_after_epoch:bool = True
+    sample_after_epoch:bool = False
     model_location:str = "./decoder_fmnist.pt"
 
 @dataclass
