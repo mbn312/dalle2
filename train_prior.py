@@ -1,4 +1,6 @@
 import torch
+from os.path import isfile
+from train_clip import train_clip
 from model.prior import DiffusionPrior
 from torch.utils.data import DataLoader
 from data.FMNISTConfig import FMNISTConfig
@@ -69,5 +71,12 @@ def train_prior(config):
        
 if __name__=="__main__":
     config = FMNISTConfig()
+
+    if not isfile(config.clip.model_location):
+        print("CLIP model has not been trained. Training CLIP...")
+        print("Using device: ", config.device, f"({torch.cuda.get_device_name(config.device)})" if torch.cuda.is_available() else "")
+        train_clip(config)
+    
+    print("Training Prior...")
     print("Using device: ", config.device, f"({torch.cuda.get_device_name(config.device)})" if torch.cuda.is_available() else "")
     train_prior(config)

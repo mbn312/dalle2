@@ -1,5 +1,8 @@
 import torch
 import torch.nn as nn
+from os.path import isfile
+from train_clip import train_clip
+from train_prior import train_prior
 from torch.utils.data import DataLoader
 from data.FMNISTConfig import FMNISTConfig
 from torch.optim import Adam, AdamW, lr_scheduler
@@ -92,5 +95,17 @@ def train_decoder(config):
 
 if __name__=="__main__":
     config = FMNISTConfig()
+
+    if not isfile(config.clip.model_location):
+        print("CLIP model has not been trained. Training CLIP...")
+        print("Using device: ", config.device, f"({torch.cuda.get_device_name(config.device)})" if torch.cuda.is_available() else "")
+        train_clip(config)
+
+    if not isfile(config.prior.model_location):
+        print("Prior model has not been trained. Training Prior...")
+        print("Using device: ", config.device, f"({torch.cuda.get_device_name(config.device)})" if torch.cuda.is_available() else "")
+        train_prior(config)
+
+    print("Training Decoder...")
     print("Using device: ", config.device, f"({torch.cuda.get_device_name(config.device)})" if torch.cuda.is_available() else "")
     train_decoder(config)
