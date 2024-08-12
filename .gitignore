@@ -1,3 +1,5 @@
 *__pycache__/
 
 *.pt
+
+!*trained_models/*.pt
