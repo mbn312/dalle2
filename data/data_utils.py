@@ -66,13 +66,6 @@ def get_schedule_values(config):
         schedule_values["sigma"] = schedule_values["betas"] * (1.0 - schedule_values["alpha_bars_prev"]) / (1.0 - schedule_values["alpha_bars"])
         return schedule_values
 
-def forward_diffusion(x_0, schedule_values, t):
-    noise = torch.randn_like(x_0)
-    sqrt_alpha_bars = extract_and_expand(schedule_values["sqrt_alpha_bars"], t, x_0.shape)
-    sqrt_one_minus_alpha_bars = extract_and_expand(schedule_values["sqrt_one_minus_alpha_bars"], t, x_0.shape)
-    x_noisy = (sqrt_alpha_bars * x_0) + (sqrt_one_minus_alpha_bars * noise)
-    return x_noisy, noise
-
 def extract_and_expand(x, idx, shape):
     return x[idx].reshape(idx.shape[0], *((1, ) * (len(shape) - 1)))
 
@@ -86,3 +79,10 @@ def freeze_model(model, set_eval=True):
 def unfreeze_model(model):
     for param in model.parameters():
         param.requires_grad = True
+
+def forward_diffusion(x_0, schedule_values, t):
+    noise = torch.randn_like(x_0)
+    sqrt_alpha_bars = extract_and_expand(schedule_values["sqrt_alpha_bars"], t, x_0.shape)
+    sqrt_one_minus_alpha_bars = extract_and_expand(schedule_values["sqrt_one_minus_alpha_bars"], t, x_0.shape)
+    x_noisy = (sqrt_alpha_bars * x_0) + (sqrt_one_minus_alpha_bars * noise)
+    return x_noisy, noise

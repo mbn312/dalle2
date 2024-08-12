@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
+import matplotlib.pyplot as plt
+from data.data_utils import freeze_model, get_schedule_values, extract_and_expand, tokenizer
 from model.prior import DiffusionPrior
-from data.data_utils import freeze_model
 from model.transformer import SinusoidalPositionalEmbedding, TransformerBlock
 
 class Downsample(nn.Module):
@@ -351,3 +352,136 @@ class Decoder(nn.Module):
         x = self.output(x)
 
         return x
+    
+@torch.no_grad()
+def sample_image(config, prompt, mask, schedule_values=None):
+    # Load decoder model
+    decoder = Decoder(config).to(config.device)
+    decoder.load_state_dict(torch.load(config.decoder.model_location, map_location=config.device))
+    decoder.eval()
+
+    B = prompt.shape[0]
+    # Get completely noisy image
+    img = torch.randn((B, config.img_channels, config.img_size[0], config.img_size[1]), device=config.device)
+
+    # Calculate schedule values
+    if schedule_values is None:
+        schedule_values = get_schedule_values(config)
+
+    for t in range(0, config.decoder.max_time)[::-1]:
+        # Setting the timesteps for all the items in the batch
+        timesteps = torch.full((B,), t, device=config.device, dtype=torch.long)
+
+        # Getting schedule values for timestep
+        sqrt_recip_alphas_t = extract_and_expand(schedule_values["sqrt_recip_alphas"], timesteps, img.shape)
+        betas_t = extract_and_expand(schedule_values["betas"], timesteps, img.shape)
+        sqrt_one_minus_alpha_bars_t = extract_and_expand(schedule_values["sqrt_one_minus_alpha_bars"], timesteps, img.shape)
+        sigma_t = extract_and_expand(schedule_values["sigma"], timesteps, img.shape)
+
+        # Predicting noise at timestep t with decoder
+        pred_noise = decoder(img, timesteps, caption=prompt, mask=mask)
+
+        # Generating random noise
+        z = torch.randn_like(img) if t > 0 else 0
+
+        # Calculating image at timestep t-1
+        img = sqrt_recip_alphas_t * (img - (betas_t / sqrt_one_minus_alpha_bars_t) * pred_noise) + (sigma_t * z)
+
+        img = torch.clamp(img, -1.0, 1.0)
+
+    return img
+
+@torch.no_grad()
+def sample_image(config, prompt, mask, schedule_values=None, decoder=None):
+    # Load decoder model
+    if decoder is None:
+      decoder = Decoder(config).to(config.device)
+      decoder.load_state_dict(torch.load(config.decoder.model_location, map_location=config.device))
+      decoder.eval()
+
+    B = prompt.shape[0]
+    # Get completely noisy image
+    img = torch.randn((B, config.img_channels, config.img_size[0], config.img_size[1]), device=config.device)
+
+    # Calculate schedule values
+    if schedule_values is None:
+        schedule_values = get_schedule_values(config)
+
+    for t in range(0, config.decoder.max_time)[::-1]:
+        # Setting the timesteps for all the items in the batch
+        timesteps = torch.full((B,), t, device=config.device, dtype=torch.long)
+
+        # Getting schedule values for timestep
+        sqrt_recip_alphas_t = extract_and_expand(schedule_values["sqrt_recip_alphas"], timesteps, img.shape)
+        betas_t = extract_and_expand(schedule_values["betas"], timesteps, img.shape)
+        sqrt_one_minus_alpha_bars_t = extract_and_expand(schedule_values["sqrt_one_minus_alpha_bars"], timesteps, img.shape)
+        sigma_t = extract_and_expand(schedule_values["sigma"], timesteps, img.shape)
+
+        # Predicting noise at timestep t with decoder
+        pred_noise = decoder(img, timesteps, caption=prompt, mask=mask)
+
+        # Generating random noise
+        z = torch.randn_like(img) if t > 0 else 0
+
+        # Calculating image at timestep t-1
+        img = sqrt_recip_alphas_t * (img - (betas_t / sqrt_one_minus_alpha_bars_t) * pred_noise) + (sigma_t * z)
+
+        img = torch.clamp(img, -1.0, 1.0)
+
+    return img
+
+@torch.no_grad()
+def sample_plot_image(config, prompt, mask, schedule_values=None, decoder=None):
+    # Load decoder model
+    if decoder is None:
+        decoder = Decoder(config).to(config.device)
+        decoder.load_state_dict(torch.load(config.decoder.model_location, map_location=config.device))
+
+    decoder.eval()
+
+    B = prompt.shape[0]
+    # Get completely noisy image
+    img = torch.randn((B, config.img_channels, config.img_size[0], config.img_size[1]), device=config.device)
+
+    # Calculate schedule values
+    if schedule_values is None:
+        schedule_values = get_schedule_values(config)
+
+    plt.figure(figsize=(25,3))
+    plt.axis('off')
+    num_images = 10
+    plot_imgs = torch.linspace(0, config.decoder.max_time-1, 10, dtype=torch.int)
+
+    for t in range(0, config.decoder.max_time)[::-1]:
+        # Setting the timesteps for all the items in the batch
+        timesteps = torch.full((B,), t, device=config.device, dtype=torch.long)
+
+        # Getting schedule values for timestep
+        sqrt_recip_alphas_t = extract_and_expand(schedule_values["sqrt_recip_alphas"], timesteps, img.shape)
+        betas_t = extract_and_expand(schedule_values["betas"], timesteps, img.shape)
+        sqrt_one_minus_alpha_bars_t = extract_and_expand(schedule_values["sqrt_one_minus_alpha_bars"], timesteps, img.shape)
+        sigma_t = extract_and_expand(schedule_values["sigma"], timesteps, img.shape)
+
+        # Predicting noise at timestep t with decoder
+        pred_noise = decoder(img, timesteps, caption=prompt, mask=mask)
+
+        # Generating random noise
+        z = torch.randn_like(img) if t > 0 else 0
+
+        # Calculating image at timestep t-1
+        img = sqrt_recip_alphas_t * (img - (betas_t / sqrt_one_minus_alpha_bars_t) * pred_noise) + (sigma_t * z)
+
+        # Plotting image
+        if t == plot_imgs[-1]:
+            plot_imgs = plot_imgs[:-1]
+            plt.subplot(1, num_images, num_images - len(plot_imgs))
+            plt.imshow(img.detach().cpu()[0].permute(1,2,0), cmap="gray" if config.img_channels == 1 else None)
+
+        img = torch.clamp(img, -1.0, 1.0)
+
+    # Add title to plot
+    title, _ = tokenizer(prompt[0], mask[0], text_seq_length=config.text_seq_length)
+    plt.suptitle(f'Prompt: {title}')
+    plt.show()
+
+    return img
