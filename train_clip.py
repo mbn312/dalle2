@@ -6,8 +6,6 @@ from data.FMNISTConfig import FMNISTConfig
 from torch.optim import Adam, AdamW, lr_scheduler
 from data.dataset import get_train_set, get_test_set
 
-
-
 def train_clip(config):
     clip = CLIP(config).to(config.device)
 
@@ -16,7 +14,7 @@ def train_clip(config):
     train_loader = DataLoader(train_set, shuffle=True, batch_size=config.clip.batch_size, num_workers=config.clip.num_workers)
 
     if config.clip.validate:
-        val_set = get_test_set(config, mean, std)
+        val_set = get_test_set(config, mean=mean, std=std)
         val_loader = DataLoader(val_set, shuffle=False, batch_size=config.clip.batch_size, num_workers=config.clip.num_workers)
 
         # Getting dataset captions to compare images to during validation
@@ -51,6 +49,12 @@ def train_clip(config):
 
         train_loss = train_loss / len(train_loader)
 
+        # Update learning rate scheduler
+        if epoch < config.clip.warmup_epochs:
+            warmup.step()
+        else:
+            scheduler.step()
+
         # Validation
         if config.clip.validate:
             clip.eval()
@@ -82,24 +86,18 @@ def train_clip(config):
             if val_loss <= best_loss:
                 best_loss = val_loss
                 torch.save(clip.state_dict(), config.clip.model_location)
+
+            # Print out metrics
+            if config.clip.get_val_accuracy:
+                print(f"[Epoch {epoch+1}/{config.clip.epochs}] Training Loss: {train_loss:.3f} | Validation Loss: {val_loss:.3f} | Validation Accuracy: {100 * correct / total:.2f}")
+            else:
+                print(f"[Epoch {epoch+1}/{config.clip.epochs}] Training Loss: {train_loss:.3f} | Validation Loss: {val_loss:.3f}")
         else:
+            # Save model
             torch.save(clip.state_dict(), config.clip.model_location)
 
-        # Update learning rate scheduler
-        if epoch < config.clip.warmup_epochs:
-            warmup.step()
-        else:
-            scheduler.step()
-
-        # Print out metrics
-        if not config.clip.validate:
+            # Print out metrics
             print(f"[Epoch {epoch+1}/{config.clip.epochs}] Training Loss: {train_loss:.3f}")
-        elif config.clip.get_val_accuracy:
-            print(f"[Epoch {epoch+1}/{config.clip.epochs}] Training Loss: {train_loss:.3f} | Validation Loss: {val_loss:.3f} | Validation Accuracy: {100 * correct / total:.2f}")
-        else:
-            print(f"[Epoch {epoch+1}/{config.clip.epochs}] Training Loss: {train_loss:.3f} | Validation Loss: {val_loss:.3f}")
-
-    return config
 
 if __name__=="__main__":
     config = FMNISTConfig()

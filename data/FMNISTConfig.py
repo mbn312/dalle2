@@ -46,6 +46,7 @@ class PriorConfig:
     bias:bool = False
     # Training
     augment_data:bool = False
+    validate:bool = True
     num_workers:int = 0
     batch_size:int = 128
     lr:float = 5e-4
