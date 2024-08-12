@@ -367,7 +367,7 @@ def sample_image(config, prompt, mask, schedule_values=None, decoder=None):
 
     # Calculate schedule values
     if schedule_values is None:
-        schedule_values = get_schedule_values(config)
+        schedule_values = get_schedule_values(schedule=config.decoder.schedule, max_time=config.decoder.max_time, device=config.device)
 
     for t in range(0, config.decoder.max_time)[::-1]:
         # Setting the timesteps for all the items in the batch
@@ -407,7 +407,7 @@ def sample_plot_image(config, prompt, mask, schedule_values=None, decoder=None):
 
     # Calculate schedule values
     if schedule_values is None:
-        schedule_values = get_schedule_values(config)
+        schedule_values = get_schedule_values(schedule=config.decoder.schedule, max_time=config.decoder.max_time, device=config.device)
 
     plt.figure(figsize=(25,3))
     plt.axis('off')

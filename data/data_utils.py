@@ -39,7 +39,7 @@ def get_mean_std(data, img_channels, denom=1):
     return mean, std
 
 # Returns beta schedule
-def get_beta_schedule(schedule, max_time, s=0.008):
+def get_beta_schedule(schedule="linear", max_time=1000, s=0.008):
     if schedule == "linear":
         scale = 1000 / max_time
         betas = torch.linspace(1e-4  * scale, 0.02  * scale, max_time)
@@ -54,15 +54,15 @@ def get_beta_schedule(schedule, max_time, s=0.008):
 
     return betas
 
-def get_schedule_values(config):
+def get_schedule_values(schedule="linear", max_time=1000, device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):
         schedule_values = {}
-        schedule_values["betas"] = get_beta_schedule(config.prior.schedule, config.prior.max_time).to(config.device)
+        schedule_values["betas"] = get_beta_schedule(schedule, max_time).to(device)
         schedule_values["alphas"] = 1.0 - schedule_values["betas"]
         schedule_values["alpha_bars"] = torch.cumprod(schedule_values["alphas"], axis = 0)
         schedule_values["sqrt_recip_alphas"] = torch.sqrt(1.0 / schedule_values["alphas"])
         schedule_values["sqrt_alpha_bars"] = torch.sqrt(schedule_values["alpha_bars"])
         schedule_values["sqrt_one_minus_alpha_bars"] = torch.sqrt(1.0 - schedule_values["alpha_bars"])
-        schedule_values["alpha_bars_prev"] = torch.cat((torch.ones(1, device=config.device), schedule_values["alpha_bars"][:-1]))
+        schedule_values["alpha_bars_prev"] = torch.cat((torch.ones(1, device=device), schedule_values["alpha_bars"][:-1]))
         schedule_values["sigma"] = schedule_values["betas"] * (1.0 - schedule_values["alpha_bars_prev"]) / (1.0 - schedule_values["alpha_bars"])
         return schedule_values
 

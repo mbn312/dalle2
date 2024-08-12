@@ -18,7 +18,7 @@ def train_decoder(config):
         val_set = get_test_set(config, mean=mean, std=std)
         val_loader = DataLoader(val_set, shuffle=False, batch_size=config.decoder.batch_size, num_workers=config.decoder.num_workers)
 
-    schedule_values = get_schedule_values(config)
+    schedule_values = get_schedule_values(schedule=config.decoder.schedule, max_time=config.decoder.max_time, device=config.device)
 
     decoder = Decoder(config).to(config.device)
 

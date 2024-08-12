@@ -23,7 +23,7 @@ class DiffusionPrior(nn.Module):
 
         self.learned_embedding = nn.Parameter(torch.randn(config.latent_dim))
 
-        self.schedule_values = get_schedule_values(config)
+        self.schedule_values = get_schedule_values(schedule=config.prior.schedule, max_time=config.prior.max_time, device=config.device)
 
         # Transformer blocks
         self.decoder = nn.ModuleList(
