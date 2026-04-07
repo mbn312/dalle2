@@ -20,8 +20,7 @@ class FMNIST(Dataset):
                 T.ToTensor()
             ])
 
-
-        self.dataset = FashionMNIST(root=config.data_location, train=train, download=download, transform=T.Resize(config.img_size))
+        self.dataset = FashionMNIST(root=config.data_location, train=train, download=download)
 
         self.text_seq_length = config.text_seq_length
 
@@ -53,13 +52,13 @@ class DatasetSplit(Dataset):
     def __init__(self,
                  data,
                  captions=None,
-                 transform=T.Compose([])
+                 transform=None
             ):
         self.dataset = data
 
         self.captions = captions
 
-        self.transform = transform
+        self.transform = transform if transform is not None else T.Compose([])
 
     def __len__(self):
         return len(self.dataset)
@@ -128,7 +127,7 @@ def get_train_val_split(config, augment_data=False):
 
 def get_test_set(config, mean=None, std=None):
     if config.dataset == "fashion_mnist":
-        dataset = FMNIST(config, train=True, download=False, transform=T.Resize(config.img_size))
+        dataset = FMNIST(config, train=True, download=True, transform=T.Resize(config.img_size))
     else:
         raise Exception("Dataset not implemented.")
 
@@ -142,7 +141,7 @@ def get_test_set(config, mean=None, std=None):
     ])
 
     if config.dataset == "fashion_mnist":
-        dataset = FMNIST(config, train=False, download=False, transform=transform)
+        dataset = FMNIST(config, train=False, download=True, transform=transform)
     else:
         raise Exception("Dataset does not exist")
 

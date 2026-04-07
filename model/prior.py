@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from model.clip import CLIP
-from data.data_utils import *
+from data.data_utils import freeze_model, forward_diffusion, get_schedule_values, load_model_checkpoint
 from model.transformer import SinusoidalPositionalEmbedding, TransformerBlock
 
 class DiffusionPrior(nn.Module):
@@ -9,7 +9,7 @@ class DiffusionPrior(nn.Module):
         super().__init__()
         # Loading CLIP Model
         self.clip = CLIP(config).to(config.device)
-        self.clip.load_state_dict(torch.load(config.clip.model_location, map_location=config.device))
+        self.clip.load_state_dict(load_model_checkpoint(config.clip.model_location, config.device))
         freeze_model(self.clip)
 
         self.config = config
@@ -23,7 +23,12 @@ class DiffusionPrior(nn.Module):
 
         self.learned_embedding = nn.Parameter(torch.randn(config.latent_dim))
 
-        self.schedule_values = get_schedule_values(schedule=config.prior.schedule, max_time=config.prior.max_time, device=config.device)
+        self.schedule_values = get_schedule_values(
+            schedule=config.prior.schedule,
+            max_time=config.prior.max_time,
+            schedule_offset=config.prior.schedule_offset,
+            device=config.device,
+        )
 
         # Transformer blocks
         self.decoder = nn.ModuleList(
@@ -40,17 +45,22 @@ class DiffusionPrior(nn.Module):
         # Output Projection
         self.output = nn.Sequential(
             nn.LayerNorm(config.latent_dim),
-            nn.Linear(config.latent_dim, config.latent_dim, bias=config.decoder.bias)
+            nn.Linear(config.latent_dim, config.latent_dim, bias=config.prior.bias)
         )
 
         self.register_buffer("causal_attention_mask", torch.tril(torch.ones(5, 5))[None, :])
 
     def get_one_sample(self, text_embeddings, captions):
         # Get image embeddings that are pure noise
-        noisy_image_embeddings = torch.randn(text_embeddings.shape, device=self.config.device)
+        noisy_image_embeddings = torch.randn_like(text_embeddings)
 
         # timestep is max for all items because image embeddings are pure noise
-        timesteps = torch.full((captions.shape[0],), self.config.prior.max_time - 1)
+        timesteps = torch.full(
+            (captions.shape[0],),
+            self.config.prior.max_time - 1,
+            device=text_embeddings.device,
+            dtype=torch.long,
+        )
 
         # Get timestep embeddings
         timestep_embeddings = self.time_mlp(timesteps) # (B, ) -> (B, latent_dim)
@@ -78,6 +88,11 @@ class DiffusionPrior(nn.Module):
         return pred_image_embeddings
 
     def sample(self, captions, masks=None):
+        device = self.learned_embedding.device
+        captions = captions.to(device)
+        if masks is not None:
+            masks = masks.to(device)
+
         # Get CLIP text embeddings
         t_emb = self.clip.text_encoder(captions, mask=masks) # (B, text_seq_length) -> (B, latent_dim)
         text_embeddings = t_emb[:, None, :] # (B, latent_dim) -> (B, 1, latent_dim)
@@ -94,18 +109,24 @@ class DiffusionPrior(nn.Module):
         sample_1 = self.get_one_sample(text_embeddings, captions)
         sample_2 = self.get_one_sample(text_embeddings, captions)
 
-        gen_image_embeddings = torch.zeros(sample_1.shape)
-
         # Choosing the samples with the higher dot product with text embeddings
-        for i in range(gen_image_embeddings.shape[0]):
-            if sample_1[i] @ t_emb[i] >= sample_2[i] @ t_emb[i]:
-                gen_image_embeddings[i] = sample_1[i]
-            else:
-                gen_image_embeddings[i] = sample_2[i]
+        sample_1_score = (sample_1 * t_emb).sum(dim=1)
+        sample_2_score = (sample_2 * t_emb).sum(dim=1)
+        gen_image_embeddings = torch.where(
+            (sample_1_score >= sample_2_score)[:, None],
+            sample_1,
+            sample_2,
+        )
 
         return gen_image_embeddings
 
     def forward(self, images, captions, masks=None):
+        device = self.learned_embedding.device
+        images = images.to(device)
+        captions = captions.to(device)
+        if masks is not None:
+            masks = masks.to(device)
+
         # Get CLIP image embeddings
         image_embeddings = self.clip.image_encoder(images) # (B, C, H, W) -> (B, latent_dim)
 
@@ -122,7 +143,7 @@ class DiffusionPrior(nn.Module):
         captions = captions[:, None, :] # (B, latent_dim) -> (B, 1, latent_dim)
 
         # Get random timesteps for forward diffusion
-        timesteps = torch.randint(0, self.config.prior.max_time, (images.shape[0],)) # (B, )
+        timesteps = torch.randint(0, self.config.prior.max_time, (images.shape[0],), device=device, dtype=torch.long) # (B, )
 
         # Get timestep embeddings
         timestep_embeddings = self.time_mlp(timesteps) # (B, ) -> (B, latent_dim)

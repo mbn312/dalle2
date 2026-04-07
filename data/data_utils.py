@@ -1,23 +1,67 @@
+from pathlib import Path
+
 import torch
 import numpy as np
+
+def is_lfs_pointer_file(path):
+    path = Path(path)
+    if not path.is_file():
+        return False
+
+    with path.open("rb") as f:
+        header = f.read(200)
+
+    try:
+        header_text = header.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+
+    return header_text.startswith("version https://git-lfs.github.com/spec/v1")
+
+def has_valid_checkpoint(path):
+    path = Path(path)
+    return path.is_file() and not is_lfs_pointer_file(path)
+
+def load_model_checkpoint(path, device):
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Checkpoint not found: {path}")
+
+    if is_lfs_pointer_file(path):
+        raise RuntimeError(
+            f"{path} is a Git LFS pointer, not a real checkpoint. Run `git lfs pull` to fetch model weights."
+        )
+
+    return torch.load(path, map_location=device)
+
+def ensure_parent_dir(path):
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 def tokenizer(text, mask=None, text_seq_length=128):
     # If a mask is not inputted it encodes text, otherwise it decodes the text
     if mask is None:
         # Add SOT and EOT tokens
         out = chr(2) + text + chr(3)
+        if len(out) > text_seq_length:
+            out = out[: text_seq_length - 1] + chr(3)
 
         # Pad to inputted sequence length
         out = out + "".join([chr(0) for _ in range(text_seq_length - len(out))])
 
         # Encode text
-        out = torch.IntTensor(list(out.encode("utf-8")))
+        out = torch.LongTensor(list(out.encode("utf-8")))
 
         # Create text mask
-        mask = (out != 0).type(torch.IntTensor)
+        mask = (out != 0).type(torch.long)
     else:
+        if isinstance(text, torch.Tensor):
+            text = text.detach().cpu()
+
+        if isinstance(mask, torch.Tensor):
+            mask = mask.detach().cpu()
+
         # Decode text
-        out = "".join([chr(x) for x in text[1 : (len(mask.nonzero()) - 1)]])
+        out = "".join([chr(int(x)) for x in text[1 : (len(mask.nonzero()) - 1)]])
         mask = None
 
     return out, mask
@@ -50,21 +94,26 @@ def get_beta_schedule(schedule="linear", max_time=1000, s=0.008):
         betas = 1 - (a_bars[1:] / a_bars[:-1])
         betas = torch.clamp(betas, min=0, max=0.999)
     else:
-        Exception("Beta schedule not implemented.")
+        raise ValueError(f"Beta schedule not implemented: {schedule}")
 
     return betas
 
-def get_schedule_values(schedule="linear", max_time=1000, device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):
-        schedule_values = {}
-        schedule_values["betas"] = get_beta_schedule(schedule, max_time).to(device)
-        schedule_values["alphas"] = 1.0 - schedule_values["betas"]
-        schedule_values["alpha_bars"] = torch.cumprod(schedule_values["alphas"], axis = 0)
-        schedule_values["sqrt_recip_alphas"] = torch.sqrt(1.0 / schedule_values["alphas"])
-        schedule_values["sqrt_alpha_bars"] = torch.sqrt(schedule_values["alpha_bars"])
-        schedule_values["sqrt_one_minus_alpha_bars"] = torch.sqrt(1.0 - schedule_values["alpha_bars"])
-        schedule_values["alpha_bars_prev"] = torch.cat((torch.ones(1, device=device), schedule_values["alpha_bars"][:-1]))
-        schedule_values["sigma"] = schedule_values["betas"] * (1.0 - schedule_values["alpha_bars_prev"]) / (1.0 - schedule_values["alpha_bars"])
-        return schedule_values
+def get_schedule_values(
+    schedule="linear",
+    max_time=1000,
+    schedule_offset=0.008,
+    device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+):
+    schedule_values = {}
+    schedule_values["betas"] = get_beta_schedule(schedule, max_time, s=schedule_offset).to(device)
+    schedule_values["alphas"] = 1.0 - schedule_values["betas"]
+    schedule_values["alpha_bars"] = torch.cumprod(schedule_values["alphas"], dim=0)
+    schedule_values["sqrt_recip_alphas"] = torch.sqrt(1.0 / schedule_values["alphas"])
+    schedule_values["sqrt_alpha_bars"] = torch.sqrt(schedule_values["alpha_bars"])
+    schedule_values["sqrt_one_minus_alpha_bars"] = torch.sqrt(1.0 - schedule_values["alpha_bars"])
+    schedule_values["alpha_bars_prev"] = torch.cat((torch.ones(1, device=device), schedule_values["alpha_bars"][:-1]))
+    schedule_values["sigma"] = schedule_values["betas"] * (1.0 - schedule_values["alpha_bars_prev"]) / (1.0 - schedule_values["alpha_bars"])
+    return schedule_values
 
 def extract_and_expand(x, idx, shape):
     return x[idx].reshape(idx.shape[0], *((1, ) * (len(shape) - 1)))

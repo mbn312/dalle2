@@ -48,25 +48,26 @@ class PatchEmbedding(nn.Module):
 
 class MultiHeadAttention(nn.Module):
     def __init__(self,
-                 d_kv,          # Width of model
-                 d_q,           # Width of condition input
+                 model_width,   # Width of model / query input
+                 cond_width,    # Width of condition input
                  n_heads=1,     # Number of attention heads
                  dropout=0.,    # Dropout rate
                  bias=False     # Linear layer bias
             ):
         super().__init__()
 
-        assert d_kv % n_heads == 0, "model_width must be divisible by n_heads"
+        assert model_width % n_heads == 0, "model_width must be divisible by n_heads"
 
+        self.model_width = model_width
         self.n_heads = n_heads
-        self.head_size = d_q // n_heads
+        self.head_size = model_width // n_heads
         self.scale = self.head_size ** -0.5
 
-        self.query = nn.Linear(d_q, d_q, bias=bias)
-        self.key = nn.Linear(d_kv, d_q, bias=bias)
-        self.value = nn.Linear(d_kv, d_q, bias=bias)
+        self.query = nn.Linear(model_width, model_width, bias=bias)
+        self.key = nn.Linear(cond_width, model_width, bias=bias)
+        self.value = nn.Linear(cond_width, model_width, bias=bias)
 
-        self.out_proj = nn.Linear(d_kv, d_kv, bias=bias)
+        self.out_proj = nn.Linear(model_width, model_width, bias=bias)
 
         self.dropout = nn.Dropout(dropout)
 
@@ -110,7 +111,7 @@ class MultiHeadAttention(nn.Module):
 
         # Combine heads
         attention = attention.transpose(1, 2) # (B, n_heads, seq_len, head_size) -> (B, seq_len, n_heads, head_size)
-        attention = attention.contiguous().view(x.shape) # (B, seq_len, n_heads, head_size) -> (B, seq_len, C)
+        attention = attention.contiguous().view(x.shape[0], x.shape[1], self.model_width) # (B, seq_len, n_heads, head_size) -> (B, seq_len, C)
 
         # Output projection
         attention = self.out_proj(attention)

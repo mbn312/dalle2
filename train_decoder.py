@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from os.path import isfile
 from train_clip import train_clip
 from train_prior import train_prior
 from torch.utils.data import DataLoader
@@ -8,9 +7,19 @@ from data.FMNISTConfig import FMNISTConfig
 from torch.optim import Adam, AdamW, lr_scheduler
 from data.dataset import get_train_set, get_test_set
 from model.decoder import Decoder, sample_plot_image
-from data.data_utils import get_schedule_values, forward_diffusion, tokenizer
+from data.data_utils import ensure_parent_dir, forward_diffusion, get_schedule_values, has_valid_checkpoint, tokenizer
 
 def train_decoder(config):
+    if not has_valid_checkpoint(config.clip.model_location):
+        raise FileNotFoundError(
+            f"A valid CLIP checkpoint is required to train the decoder: {config.clip.model_location}"
+        )
+
+    if not has_valid_checkpoint(config.prior.model_location):
+        raise FileNotFoundError(
+            f"A valid prior checkpoint is required to train the decoder: {config.prior.model_location}"
+        )
+
     train_set, mean, std = get_train_set(config, augment_data=config.decoder.augment_data)
     train_loader = DataLoader(train_set, shuffle=True, batch_size=config.decoder.batch_size, num_workers=config.decoder.num_workers)
 
@@ -18,9 +27,15 @@ def train_decoder(config):
         val_set = get_test_set(config, mean=mean, std=std)
         val_loader = DataLoader(val_set, shuffle=False, batch_size=config.decoder.batch_size, num_workers=config.decoder.num_workers)
 
-    schedule_values = get_schedule_values(schedule=config.decoder.schedule, max_time=config.decoder.max_time, device=config.device)
+    schedule_values = get_schedule_values(
+        schedule=config.decoder.schedule,
+        max_time=config.decoder.max_time,
+        schedule_offset=config.decoder.schedule_offset,
+        device=config.device,
+    )
 
     decoder = Decoder(config).to(config.device)
+    ensure_parent_dir(config.decoder.model_location)
 
     if config.decoder.weight_decay == 0:
         optimizer = Adam(decoder.parameters(), lr=config.decoder.lr)
@@ -67,15 +82,16 @@ def train_decoder(config):
         if config.decoder.validate:
             decoder.eval()
             validation_loss = 0.0
-            for batch in val_loader:
-                image, caption, mask = batch["image"].to(config.device), batch["caption"].to(config.device), batch["mask"].to(config.device)
+            with torch.no_grad():
+                for batch in val_loader:
+                    image, caption, mask = batch["image"].to(config.device), batch["caption"].to(config.device), batch["mask"].to(config.device)
 
-                # Calculating Loss
-                timesteps = torch.randint(0, config.decoder.max_time, (image.shape[0],), device=config.device, dtype=torch.long)
-                noisy_image, noise = forward_diffusion(image, schedule_values, timesteps)
-                pred_noise = decoder(noisy_image, timesteps, caption, mask)
-                loss = nn.functional.mse_loss(pred_noise, noise)
-                validation_loss += loss.item()
+                    # Calculating Loss
+                    timesteps = torch.randint(0, config.decoder.max_time, (image.shape[0],), device=config.device, dtype=torch.long)
+                    noisy_image, noise = forward_diffusion(image, schedule_values, timesteps)
+                    pred_noise = decoder(noisy_image, timesteps, caption, mask)
+                    loss = nn.functional.mse_loss(pred_noise, noise)
+                    validation_loss += loss.item()
 
             validation_loss = validation_loss / len(val_loader)
 
@@ -96,12 +112,12 @@ def train_decoder(config):
 if __name__=="__main__":
     config = FMNISTConfig()
 
-    if not isfile(config.clip.model_location):
+    if not has_valid_checkpoint(config.clip.model_location):
         print("CLIP model has not been trained. Training CLIP...")
         print("Using device: ", config.device, f"({torch.cuda.get_device_name(config.device)})" if torch.cuda.is_available() else "")
         train_clip(config)
 
-    if not isfile(config.prior.model_location):
+    if not has_valid_checkpoint(config.prior.model_location):
         print("Prior model has not been trained. Training Prior...")
         print("Using device: ", config.device, f"({torch.cuda.get_device_name(config.device)})" if torch.cuda.is_available() else "")
         train_prior(config)

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
-from data.data_utils import freeze_model, get_schedule_values, extract_and_expand, tokenizer
+from data.data_utils import extract_and_expand, freeze_model, get_schedule_values, load_model_checkpoint, tokenizer
 from model.prior import DiffusionPrior
 from model.transformer import SinusoidalPositionalEmbedding, TransformerBlock
 
@@ -182,7 +182,7 @@ class Decoder(nn.Module):
         super().__init__()
         # Loading Prior Model
         self.prior = DiffusionPrior(config).to(config.device)
-        self.prior.load_state_dict(torch.load(config.prior.model_location, map_location=config.device))
+        self.prior.load_state_dict(load_model_checkpoint(config.prior.model_location, config.device))
         freeze_model(self.prior)
 
         # MLP to get time embeddings
@@ -287,9 +287,6 @@ class Decoder(nn.Module):
             nn.Conv2d(config.decoder.model_channels, config.img_channels, config.decoder.kernel_size, padding=1)
         )
 
-        # Skip connections
-        self.connections = []
-
     def encode_text(self, text, mask=None):
         x = self.text_embedding(text)
 
@@ -303,6 +300,12 @@ class Decoder(nn.Module):
         return x
 
     def forward(self, x, time, caption=None, mask=None):
+        time = time.to(x.device, dtype=torch.long)
+        if caption is not None:
+            caption = caption.to(x.device)
+        if mask is not None:
+            mask = mask.to(x.device)
+
         # Sample prior model to get CLIP image embeddings
         img_embeddings = self.prior.sample(caption, mask).to(x.device)
 
@@ -316,13 +319,14 @@ class Decoder(nn.Module):
 
         # Initial convolution
         x = self.in_conv(x)
+        connections = []
 
         # UNet encoder layers
         for module in self.encoder:
             if isinstance(module, ResidualBlock):
                 x = module(x, c_emb)
                 # Getting skip connection
-                self.connections.append(x)
+                connections.append(x)
             elif isinstance(module, AttentionBlock):
                 x = module(x, cond=c_attn)
             else:
@@ -341,7 +345,7 @@ class Decoder(nn.Module):
         for module in self.decoder:
             if isinstance(module, ResidualBlock):
                 # Concatenate skip connection to end of input
-                x = torch.cat([x, self.connections.pop()], dim=1)
+                x = torch.cat([x, connections.pop()], dim=1)
                 x = module(x, c_emb)
             elif isinstance(module, AttentionBlock):
                 x = module(x, cond=c_attn)
@@ -358,16 +362,24 @@ def sample_image(config, prompt, mask, schedule_values=None, decoder=None):
     # Load decoder model
     if decoder is None:
       decoder = Decoder(config).to(config.device)
-      decoder.load_state_dict(torch.load(config.decoder.model_location, map_location=config.device))
-      decoder.eval()
+      decoder.load_state_dict(load_model_checkpoint(config.decoder.model_location, config.device))
 
+    decoder.eval()
+    prompt = prompt.to(config.device)
+    if mask is not None:
+        mask = mask.to(config.device)
     B = prompt.shape[0]
     # Get completely noisy image
     img = torch.randn((B, config.img_channels, config.img_size[0], config.img_size[1]), device=config.device)
 
     # Calculate schedule values
     if schedule_values is None:
-        schedule_values = get_schedule_values(schedule=config.decoder.schedule, max_time=config.decoder.max_time, device=config.device)
+        schedule_values = get_schedule_values(
+            schedule=config.decoder.schedule,
+            max_time=config.decoder.max_time,
+            schedule_offset=config.decoder.schedule_offset,
+            device=config.device,
+        )
 
     for t in range(0, config.decoder.max_time)[::-1]:
         # Setting the timesteps for all the items in the batch
@@ -397,9 +409,12 @@ def sample_plot_image(config, prompt, mask, schedule_values=None, decoder=None):
     # Load decoder model
     if decoder is None:
         decoder = Decoder(config).to(config.device)
-        decoder.load_state_dict(torch.load(config.decoder.model_location, map_location=config.device))
+        decoder.load_state_dict(load_model_checkpoint(config.decoder.model_location, config.device))
 
     decoder.eval()
+    prompt = prompt.to(config.device)
+    if mask is not None:
+        mask = mask.to(config.device)
 
     B = prompt.shape[0]
     # Get completely noisy image
@@ -407,12 +422,17 @@ def sample_plot_image(config, prompt, mask, schedule_values=None, decoder=None):
 
     # Calculate schedule values
     if schedule_values is None:
-        schedule_values = get_schedule_values(schedule=config.decoder.schedule, max_time=config.decoder.max_time, device=config.device)
+        schedule_values = get_schedule_values(
+            schedule=config.decoder.schedule,
+            max_time=config.decoder.max_time,
+            schedule_offset=config.decoder.schedule_offset,
+            device=config.device,
+        )
 
     plt.figure(figsize=(25,3))
     plt.axis('off')
     num_images = 10
-    plot_imgs = torch.linspace(0, config.decoder.max_time-1, 10, dtype=torch.int)
+    plot_imgs = torch.linspace(0, config.decoder.max_time - 1, 10, dtype=torch.float32).round().to(torch.long).tolist()
 
     for t in range(0, config.decoder.max_time)[::-1]:
         # Setting the timesteps for all the items in the batch
@@ -432,14 +452,13 @@ def sample_plot_image(config, prompt, mask, schedule_values=None, decoder=None):
 
         # Calculating image at timestep t-1
         img = sqrt_recip_alphas_t * (img - (betas_t / sqrt_one_minus_alpha_bars_t) * pred_noise) + (sigma_t * z)
+        img = torch.clamp(img, -1.0, 1.0)
 
         # Plotting image
         if t == plot_imgs[-1]:
-            plot_imgs = plot_imgs[:-1]
+            plot_imgs.pop()
             plt.subplot(1, num_images, num_images - len(plot_imgs))
             plt.imshow(img.detach().cpu()[0].permute(1,2,0), cmap="gray" if config.img_channels == 1 else None)
-
-        img = torch.clamp(img, -1.0, 1.0)
 
     # Add title to plot
     title, _ = tokenizer(prompt[0], mask[0], text_seq_length=config.text_seq_length)

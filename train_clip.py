@@ -1,6 +1,6 @@
 import torch
 from model.clip import CLIP
-from data.data_utils import tokenizer
+from data.data_utils import ensure_parent_dir, tokenizer
 from torch.utils.data import DataLoader
 from data.FMNISTConfig import FMNISTConfig
 from torch.optim import Adam, AdamW, lr_scheduler
@@ -8,6 +8,7 @@ from data.dataset import get_train_set, get_test_set
 
 def train_clip(config):
     clip = CLIP(config).to(config.device)
+    ensure_parent_dir(config.clip.model_location)
 
     # Loading train and validation sets
     train_set, mean, std = get_train_set(config, augment_data=config.clip.augment_data)

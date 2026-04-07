@@ -62,6 +62,7 @@ class DecoderConfig:
     # Diffusion
     max_time:int = 1000
     schedule:str = "cosine"
+    schedule_offset:float = 0.008
     # UNet
     n_groups:int = 8
     kernel_size:tuple[int, int] = (3,3)
@@ -109,8 +110,8 @@ class FMNISTConfig:
     train_std:list[float] = field(default_factory=lambda: [0.33848408])
     # Training
     train_val_split:tuple[int,int] = (50000, 10000)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device: torch.device = field(default_factory=lambda: torch.device("cuda" if torch.cuda.is_available() else "cpu"))
     # Model Configs
-    clip = CLIPConfig()
-    prior = PriorConfig()
-    decoder = DecoderConfig()
+    clip: CLIPConfig = field(default_factory=CLIPConfig)
+    prior: PriorConfig = field(default_factory=PriorConfig)
+    decoder: DecoderConfig = field(default_factory=DecoderConfig)

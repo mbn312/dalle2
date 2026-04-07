@@ -58,7 +58,7 @@ class TextEncoder(nn.Module):
             return x
 
         # Take features from the EOT embedding
-        x = x[torch.arange(text.shape[0]), torch.sub(torch.sum(mask, dim=1), 1)] # (B, text_seq_length, text_width) -> (B, text_width)
+        x = x[torch.arange(text.shape[0], device=text.device), torch.sub(torch.sum(mask, dim=1), 1)] # (B, text_seq_length, text_width) -> (B, text_width)
 
         # Joint multimodal embedding
         x = x @ self.projection # (B, text_width) -> (B, latent_dim)
@@ -176,7 +176,7 @@ class CLIP(nn.Module):
         logits = (I_e @ T_e.transpose(-2, -1)) * torch.exp(self.temperature) # Shape: (B, B)
 
         # Symmetric loss function
-        labels = torch.arange(logits.shape[0]).to(image.device.type)
+        labels = torch.arange(logits.shape[0], device=image.device)
 
         loss_i = nn.functional.cross_entropy(logits.transpose(-2, -1), labels)
         loss_t = nn.functional.cross_entropy(logits, labels)
