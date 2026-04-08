@@ -112,7 +112,8 @@ def get_schedule_values(
     schedule_values["sqrt_alpha_bars"] = torch.sqrt(schedule_values["alpha_bars"])
     schedule_values["sqrt_one_minus_alpha_bars"] = torch.sqrt(1.0 - schedule_values["alpha_bars"])
     schedule_values["alpha_bars_prev"] = torch.cat((torch.ones(1, device=device), schedule_values["alpha_bars"][:-1]))
-    schedule_values["sigma"] = schedule_values["betas"] * (1.0 - schedule_values["alpha_bars_prev"]) / (1.0 - schedule_values["alpha_bars"])
+    schedule_values["posterior_variance"] = (schedule_values["betas"] * (1.0 - schedule_values["alpha_bars_prev"]) / (1.0 - schedule_values["alpha_bars"]))
+    schedule_values["posterior_std"] = torch.sqrt(schedule_values["posterior_variance"])
     return schedule_values
 
 def extract_and_expand(x, idx, shape):

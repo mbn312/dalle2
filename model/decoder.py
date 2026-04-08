@@ -488,7 +488,7 @@ def sample_image(config, prompt, mask, schedule_values=None, decoder=None):
         sqrt_recip_alphas_t = extract_and_expand(schedule_values["sqrt_recip_alphas"], timesteps, img.shape)
         betas_t = extract_and_expand(schedule_values["betas"], timesteps, img.shape)
         sqrt_one_minus_alpha_bars_t = extract_and_expand(schedule_values["sqrt_one_minus_alpha_bars"], timesteps, img.shape)
-        sigma_t = extract_and_expand(schedule_values["sigma"], timesteps, img.shape)
+        posterior_std_t = extract_and_expand(schedule_values["posterior_std"], timesteps, img.shape)
 
         # Predicting noise at timestep t with decoder
         pred_noise = decoder(img, timesteps, img_embeddings, caption=prompt, mask=mask)
@@ -497,7 +497,7 @@ def sample_image(config, prompt, mask, schedule_values=None, decoder=None):
         z = torch.randn_like(img) if t > 0 else 0
 
         # Calculating image at timestep t-1
-        img = sqrt_recip_alphas_t * (img - (betas_t / sqrt_one_minus_alpha_bars_t) * pred_noise) + (sigma_t * z)
+        img = sqrt_recip_alphas_t * (img - (betas_t / sqrt_one_minus_alpha_bars_t) * pred_noise) + (posterior_std_t * z)
 
         img = torch.clamp(img, -1.0, 1.0)
 
@@ -542,7 +542,7 @@ def sample_plot_image(config, prompt, mask, schedule_values=None, decoder=None):
         sqrt_recip_alphas_t = extract_and_expand(schedule_values["sqrt_recip_alphas"], timesteps, img.shape)
         betas_t = extract_and_expand(schedule_values["betas"], timesteps, img.shape)
         sqrt_one_minus_alpha_bars_t = extract_and_expand(schedule_values["sqrt_one_minus_alpha_bars"], timesteps, img.shape)
-        sigma_t = extract_and_expand(schedule_values["sigma"], timesteps, img.shape)
+        posterior_std_t = extract_and_expand(schedule_values["posterior_std"], timesteps, img.shape)
 
         # Predicting noise at timestep t with decoder
         pred_noise = decoder(img, timesteps, img_embeddings, caption=prompt, mask=mask)
@@ -551,7 +551,7 @@ def sample_plot_image(config, prompt, mask, schedule_values=None, decoder=None):
         z = torch.randn_like(img) if t > 0 else 0
 
         # Calculating image at timestep t-1
-        img = sqrt_recip_alphas_t * (img - (betas_t / sqrt_one_minus_alpha_bars_t) * pred_noise) + (sigma_t * z)
+        img = sqrt_recip_alphas_t * (img - (betas_t / sqrt_one_minus_alpha_bars_t) * pred_noise) + (posterior_std_t * z)
         img = torch.clamp(img, -1.0, 1.0)
 
         # Plotting image
