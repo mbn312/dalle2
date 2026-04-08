@@ -63,7 +63,8 @@ def train_decoder(config):
             # Calculating Loss
             timesteps = torch.randint(0, config.decoder.max_time, (image.shape[0],), device=config.device, dtype=torch.long)
             noisy_image, noise = forward_diffusion(image, schedule_values, timesteps)
-            pred_noise = decoder(noisy_image, timesteps, caption, mask)
+            img_embeddings = decoder.encode_image_embeddings(image)
+            pred_noise = decoder(noisy_image, timesteps, img_embeddings, caption, mask)
             loss = nn.functional.mse_loss(pred_noise, noise)
             loss.backward()
 
@@ -89,7 +90,8 @@ def train_decoder(config):
                     # Calculating Loss
                     timesteps = torch.randint(0, config.decoder.max_time, (image.shape[0],), device=config.device, dtype=torch.long)
                     noisy_image, noise = forward_diffusion(image, schedule_values, timesteps)
-                    pred_noise = decoder(noisy_image, timesteps, caption, mask)
+                    img_embeddings = decoder.encode_image_embeddings(image)
+                    pred_noise = decoder(noisy_image, timesteps, img_embeddings, caption, mask)
                     loss = nn.functional.mse_loss(pred_noise, noise)
                     validation_loss += loss.item()
 

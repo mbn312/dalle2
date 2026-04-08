@@ -17,7 +17,7 @@ class Downsample(nn.Module):
     def forward(self, x):
         x = self.down(x)
         return x
-    
+
 class Upsample(nn.Module):
     def __init__(self, d_in, d_out, kernel_size=(3,3)):
         super().__init__()
@@ -28,9 +28,18 @@ class Upsample(nn.Module):
         x = nn.functional.interpolate(x, scale_factor=2)
         x = self.conv(x)
         return x
-    
+
 class ResidualBlock(nn.Module):
-    def __init__(self, d_in, d_out, cond_channels=128, n_groups=8, kernel_size=(3,3), dropout=0.0, use_scale_shift=True):
+    def __init__(
+        self,
+        d_in,
+        d_out,
+        cond_channels=128,
+        n_groups=8,
+        kernel_size=(3, 3),
+        dropout=0.0,
+        use_scale_shift=True,
+    ):
         super().__init__()
 
         self.use_scale_shift = use_scale_shift
@@ -58,7 +67,7 @@ class ResidualBlock(nn.Module):
             nn.GroupNorm(n_groups, d_out)
         )
 
-        # If necessary, applies convolution to original input to match channels to output 
+        # If necessary, applies convolution to original input to match channels to output
         self.residual = nn.Conv2d(d_in, d_out, 1) if d_in != d_out else nn.Identity()
 
     def forward(self, x_0, emb):
@@ -86,7 +95,7 @@ class ResidualBlock(nn.Module):
         x += self.residual(x_0)
 
         return x
-    
+
 class AttentionBlock(nn.Module):
     def __init__(self, n_channels, cond_channels, n_groups=8, n_heads=1, dropout=0.0):
         super().__init__()
@@ -176,7 +185,7 @@ class AttentionBlock(nn.Module):
         x = x + x_0
 
         return x
-    
+
 class Decoder(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -234,7 +243,17 @@ class Decoder(nn.Module):
         for r in config.decoder.channel_ratios:
             for _ in range(config.decoder.n_layer_blocks):
                 # Add residual block to encoder layer
-                self.encoder.append(ResidualBlock(ch, config.decoder.model_channels * r, config.decoder.cond_channels, config.decoder.n_groups, config.decoder.kernel_size, config.decoder.dropout, config.decoder.use_scale_shift))
+                self.encoder.append(
+                    ResidualBlock(
+                        ch,
+                        config.decoder.model_channels * r,
+                        config.decoder.cond_channels,
+                        config.decoder.n_groups,
+                        config.decoder.kernel_size,
+                        config.decoder.dropout,
+                        config.decoder.use_scale_shift,
+                    )
+                )
 
                 # Update number of channels
                 ch = config.decoder.model_channels * r
@@ -242,35 +261,86 @@ class Decoder(nn.Module):
                 # Outer encoder layers has no attention blocks
                 if r != config.decoder.channel_ratios[0] and r != config.decoder.channel_ratios[-1]:
                     # Add attention block to encoder layer
-                    self.encoder.append(AttentionBlock(ch, config.latent_dim, config.decoder.n_groups, config.decoder.n_heads, config.decoder.dropout))
+                    self.encoder.append(
+                        AttentionBlock(
+                            ch,
+                            config.latent_dim,
+                            config.decoder.n_groups,
+                            config.decoder.n_heads,
+                            config.decoder.dropout,
+                        )
+                    )
 
             # No downsample for last encoder layer
             if r != config.decoder.channel_ratios[-1]:
                 # Add downsample to encoder layer
-                self.encoder.append(Downsample(ch, config.decoder.kernel_size, config.decoder.stride, config.decoder.down_pool))
+                self.encoder.append(
+                    Downsample(
+                        ch,
+                        config.decoder.kernel_size,
+                        config.decoder.stride,
+                        config.decoder.down_pool,
+                    )
+                )
 
         # UNet Bottleneck Layers
         self.bottleneck = nn.ModuleList([])
         for block in range(config.decoder.n_layer_blocks):
             # Add residual block to bottleneck layer
-            self.bottleneck.append(ResidualBlock(ch, ch, config.decoder.cond_channels, config.decoder.n_groups, config.decoder.kernel_size, config.decoder.dropout, config.decoder.use_scale_shift))
+            self.bottleneck.append(
+                ResidualBlock(
+                    ch,
+                    ch,
+                    config.decoder.cond_channels,
+                    config.decoder.n_groups,
+                    config.decoder.kernel_size,
+                    config.decoder.dropout,
+                    config.decoder.use_scale_shift,
+                )
+            )
 
             # No attention block at end of bottleneck layer
             if block != config.decoder.n_layer_blocks - 1:
                 # Add attention block to bottleneck layer
-                self.bottleneck.append(AttentionBlock(ch, config.latent_dim, config.decoder.n_groups, config.decoder.n_heads, config.decoder.dropout))
+                self.bottleneck.append(
+                    AttentionBlock(
+                        ch,
+                        config.latent_dim,
+                        config.decoder.n_groups,
+                        config.decoder.n_heads,
+                        config.decoder.dropout,
+                    )
+                )
 
         # UNet Decoder Layers
         self.decoder = nn.ModuleList([])
         for r in range(len(config.decoder.channel_ratios))[::-1]:
             for _ in range(config.decoder.n_layer_blocks):
                 # Add residual block to decoder layer
-                self.decoder.append(ResidualBlock(ch * 2, ch, config.decoder.cond_channels, config.decoder.n_groups, config.decoder.kernel_size, config.decoder.dropout, config.decoder.use_scale_shift))
+                self.decoder.append(
+                    ResidualBlock(
+                        ch * 2,
+                        ch,
+                        config.decoder.cond_channels,
+                        config.decoder.n_groups,
+                        config.decoder.kernel_size,
+                        config.decoder.dropout,
+                        config.decoder.use_scale_shift,
+                    )
+                )
 
                 # Outer decoder layers has no attention blocks
                 if r != 0 and r!= len(config.decoder.channel_ratios) - 1:
                     # Add attention block to decoder layer
-                    self.decoder.append(AttentionBlock(ch, config.latent_dim, config.decoder.n_groups, config.decoder.n_heads, config.decoder.dropout))
+                    self.decoder.append(
+                        AttentionBlock(
+                            ch,
+                            config.latent_dim,
+                            config.decoder.n_groups,
+                            config.decoder.n_heads,
+                            config.decoder.dropout,
+                        )
+                    )
 
             # No upsample for last decoder layer
             if r != 0:
@@ -278,13 +348,24 @@ class Decoder(nn.Module):
                 ch = config.decoder.model_channels * config.decoder.channel_ratios[r-1]
 
                 # Add upsample to decoder layer
-                self.decoder.append(Upsample(config.decoder.model_channels * config.decoder.channel_ratios[r], ch, config.decoder.kernel_size))
+                self.decoder.append(
+                    Upsample(
+                        config.decoder.model_channels * config.decoder.channel_ratios[r],
+                        ch,
+                        config.decoder.kernel_size,
+                    )
+                )
 
         # Output projection
         self.output = nn.Sequential(
             nn.GroupNorm(config.decoder.n_groups, config.decoder.model_channels),
             nn.SiLU(),
-            nn.Conv2d(config.decoder.model_channels, config.img_channels, config.decoder.kernel_size, padding=1)
+            nn.Conv2d(
+                config.decoder.model_channels,
+                config.img_channels,
+                config.decoder.kernel_size,
+                padding=1,
+            ),
         )
 
     def encode_text(self, text, mask=None):
@@ -299,15 +380,32 @@ class Decoder(nn.Module):
 
         return x
 
-    def forward(self, x, time, caption=None, mask=None):
+    @torch.no_grad()
+    def encode_image_embeddings(self, images):
+        self.prior.clip.eval()
+        return self.prior.clip.image_encoder(images)
+
+    @torch.no_grad()
+    def sample_image_embeddings(self, caption, mask=None):
+        self.prior.eval()
+        self.prior.clip.eval()
+        return self.prior.sample(caption, mask)
+
+    def train(self, mode=True):
+        super().train(mode)
+        self.prior.eval()
+        self.prior.clip.eval()
+        return self
+
+    def forward(self, x, time, img_embeddings, caption=None, mask=None):
         time = time.to(x.device, dtype=torch.long)
+        if img_embeddings is None:
+            raise ValueError("Decoder.forward requires CLIP image embeddings.")
+        img_embeddings = img_embeddings.to(x.device)
         if caption is not None:
             caption = caption.to(x.device)
         if mask is not None:
             mask = mask.to(x.device)
-
-        # Sample prior model to get CLIP image embeddings
-        img_embeddings = self.prior.sample(caption, mask).to(x.device)
 
         # Get conditioning information for residual blocks
         c_emb = self.time_mlp(time) + self.img_projection(img_embeddings)
@@ -356,7 +454,7 @@ class Decoder(nn.Module):
         x = self.output(x)
 
         return x
-    
+
 @torch.no_grad()
 def sample_image(config, prompt, mask, schedule_values=None, decoder=None):
     # Load decoder model
@@ -369,6 +467,7 @@ def sample_image(config, prompt, mask, schedule_values=None, decoder=None):
     if mask is not None:
         mask = mask.to(config.device)
     B = prompt.shape[0]
+    img_embeddings = decoder.sample_image_embeddings(prompt, mask).to(config.device)
     # Get completely noisy image
     img = torch.randn((B, config.img_channels, config.img_size[0], config.img_size[1]), device=config.device)
 
@@ -392,7 +491,7 @@ def sample_image(config, prompt, mask, schedule_values=None, decoder=None):
         sigma_t = extract_and_expand(schedule_values["sigma"], timesteps, img.shape)
 
         # Predicting noise at timestep t with decoder
-        pred_noise = decoder(img, timesteps, caption=prompt, mask=mask)
+        pred_noise = decoder(img, timesteps, img_embeddings, caption=prompt, mask=mask)
 
         # Generating random noise
         z = torch.randn_like(img) if t > 0 else 0
@@ -417,6 +516,7 @@ def sample_plot_image(config, prompt, mask, schedule_values=None, decoder=None):
         mask = mask.to(config.device)
 
     B = prompt.shape[0]
+    img_embeddings = decoder.sample_image_embeddings(prompt, mask).to(config.device)
     # Get completely noisy image
     img = torch.randn((B, config.img_channels, config.img_size[0], config.img_size[1]), device=config.device)
 
@@ -445,7 +545,7 @@ def sample_plot_image(config, prompt, mask, schedule_values=None, decoder=None):
         sigma_t = extract_and_expand(schedule_values["sigma"], timesteps, img.shape)
 
         # Predicting noise at timestep t with decoder
-        pred_noise = decoder(img, timesteps, caption=prompt, mask=mask)
+        pred_noise = decoder(img, timesteps, img_embeddings, caption=prompt, mask=mask)
 
         # Generating random noise
         z = torch.randn_like(img) if t > 0 else 0
