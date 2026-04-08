@@ -1,5 +1,15 @@
 import torch
+from pathlib import Path
 from dataclasses import dataclass, field
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DATA_ROOT = REPO_ROOT.parent / "datasets"
+
+def _repo_path(*parts):
+    return str(REPO_ROOT.joinpath(*parts))
+
+def _data_path():
+    return str(DATA_ROOT)
 
 @dataclass
 class CLIPConfig:
@@ -28,7 +38,7 @@ class CLIPConfig:
     warmup_epochs:int = 5
     grad_max_norm:float = 1.0
     get_val_accuracy:bool = False
-    model_location:str = "./trained_models/clip_fmnist.pt"
+    model_location:str = field(default_factory=lambda: _repo_path("trained_models", "clip_fmnist.pt"))
 
 @dataclass
 class PriorConfig:
@@ -55,7 +65,7 @@ class PriorConfig:
     epochs:int = 150
     warmup_epochs:int = 5
     grad_max_norm:float = 1.0
-    model_location:str = "./trained_models/prior_fmnist.pt"
+    model_location:str = field(default_factory=lambda: _repo_path("trained_models", "prior_fmnist.pt"))
 
 @dataclass
 class DecoderConfig:
@@ -91,14 +101,14 @@ class DecoderConfig:
     warmup_epochs:int = 5
     grad_max_norm:float = 1.0
     sample_after_epoch:bool = False
-    model_location:str = "./trained_models/decoder_fmnist.pt"
+    model_location:str = field(default_factory=lambda: _repo_path("trained_models", "decoder_fmnist.pt"))
 
 @dataclass
 class FMNISTConfig:
     latent_dim:int = 256
     # Dataset Info
     dataset:str = "fashion_mnist"
-    data_location:str = "./../datasets"
+    data_location:str = field(default_factory=_data_path)
     img_size:tuple[int,int] = (32,32)
     img_channels:int = 1
     vocab_size:int = 256

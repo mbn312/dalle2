@@ -60,7 +60,7 @@ pip install --extra-index-url https://download.pytorch.org/whl/cu121 -r requirem
 
 If you are on CPU-only hardware or a different CUDA version, do not use the pinned `requirements.txt` as-is. Install compatible `torch` and `torchvision` packages for your environment first, then install the remaining Python dependencies separately.
 
-By default the dataset downloads to `./../datasets` relative to the repository root. You can change that in [`data/FMNISTConfig.py`](./data/FMNISTConfig.py).
+By default the dataset downloads to a `datasets/` directory next to the repository root. You can change that in [`data/FMNISTConfig.py`](./data/FMNISTConfig.py).
 
 ## Quick Start
 
